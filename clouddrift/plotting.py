@@ -230,3 +230,104 @@ def plot_ragged(
     ax.set_ylim([np.min(latitude), np.max(latitude)])
 
     return cb
+
+def plot_ragged_3d(
+    ax,
+    longitude: list | np.ndarray | pd.Series | xr.DataArray,
+    latitude: list | np.ndarray | pd.Series | xr.DataArray,
+    height: list | np.ndarray | pd.Series | xr.DataArray,
+    rowsize: list | np.ndarray | pd.Series | xr.DataArray,
+    *args,
+    colors: list | np.ndarray | pd.Series | xr.DataArray | None = None,
+    tolerance: float | int = 180,
+    **kwargs,
+):
+    """Plot individually the rows of a ragged array dataset in 3D on a Matplotlib Axes3D object.
+
+    This function wraps Matplotlib's 3D ``plot`` function to efficiently plot
+    the rows of a ragged array dataset in 3D space.
+
+    Parameters
+    ----------
+    ax: matplotlib.axes.Axes3D
+        3D Axis to plot on.
+    longitude : array-like
+        Longitude sequence. Unidimensional array input.
+    latitude : array-like
+        Latitude sequence. Unidimensional array input.
+    height : array-like
+        Height sequence. Unidimensional array input.
+    rowsize : list
+        List of integers specifying the number of data points in each row.
+    *args : tuple
+        Additional arguments to pass to ``ax.plot``.
+    colors : array-like
+        Values to map on the current colormap. If ``colors`` is the shape of ``rowsize``,
+        the data points of each row are uniformly colored according to the color value for the row.
+        If ``colors`` is the shape of ``longitude``, ``latitude``, and ``height``, the data points are colored accordingly.
+    tolerance : float
+        Longitude tolerance gap between data points (in degrees) for segmenting rows.
+        Defaults to 180.
+    **kwargs : dict
+        Additional keyword arguments to pass to ``ax.plot``.
+
+    Returns
+    -------
+    matplotlib.cm.ScalarMappable
+        Colormap object for creating a colorbar.
+    """
+
+    try:
+        import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
+        from matplotlib import cm
+    except ImportError:
+        raise ImportError("missing optional dependency 'matplotlib'")
+
+    if np.sum(rowsize) != len(longitude):
+        raise ValueError("The sum of rowsize must equal the length of lon, lat, and height.")
+
+    if len(longitude) != len(latitude) or len(longitude) != len(height):
+        raise ValueError("lon, lat, and height must have the same length.")
+
+    if colors is None:
+        colors = np.arange(len(rowsize))
+    elif colors is not None and (len(colors) not in [len(longitude), len(rowsize)]):
+        raise ValueError("shape colors must match the shape of lon/lat/height or rowsize.")
+
+    if isinstance(cmap := kwargs.pop("cmap", cm.viridis), str):
+        cmap = plt.get_cmap(cmap)
+
+    norm = kwargs.pop(
+        "norm", mcolors.Normalize(vmin=np.nanmin(colors), vmax=np.nanmax(colors))
+    )
+
+    cb = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+
+    mpl_plot = True if colors is None or len(colors) == len(rowsize) else False
+    traj_idx = rowsize_to_index(rowsize)
+
+    for i in range(len(rowsize)):
+        lon_i = longitude[traj_idx[i] : traj_idx[i + 1]]
+        lat_i = latitude[traj_idx[i] : traj_idx[i + 1]]
+        height_i = height[traj_idx[i] : traj_idx[i + 1]]
+
+        start = 0
+        for length in segment(lon_i, tolerance, rowsize=segment(lon_i, -tolerance)):
+            end = start + length
+
+            ax.plot(
+                lon_i[start:end],
+                lat_i[start:end],
+                height_i[start:end],
+                c=cmap(norm(colors[i])) if mpl_plot and colors is not None else None,
+                *args,
+                **kwargs,
+            )
+            start = end
+
+    ax.set_xlim([np.min(longitude), np.max(longitude)])
+    ax.set_ylim([np.min(latitude), np.max(latitude)])
+    ax.set_zlim([np.min(height), np.max(height)])
+
+    return cb
