@@ -212,15 +212,8 @@ def download(
         filelist = [filename_pattern.format(id=did) for did in drifter_ids]
     filelist = list(np.unique(filelist))
 
-    # retrieve only a subset of n_random_id trajectories
     if n_random_id:
-        if n_random_id > len(filelist):
-            _logger.warn(
-                f"Retrieving all listed trajectories because {n_random_id} is larger than the {len(filelist)} listed trajectories."
-            )
-        else:
-            rng = np.random.Generator(np.random.MT19937(42))
-            filelist = sorted(rng.choice(filelist, n_random_id, replace=False))
+        filelist = gdp._subsample(filelist, n_random_id)
 
     download_with_progress(
         [(f"{url}/{f}", os.path.join(tmp_path, f)) for f in filelist],

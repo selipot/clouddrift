@@ -250,6 +250,16 @@ def _list_gdp_directory_files() -> list[str]:
     return sorted(files, key=_sort_key)
 
 
+def _subsample(items: list, n: int) -> list:
+    if n > len(items):
+        warnings.warn(
+            f"Retrieving all listed trajectories because {n} is larger than the {len(items)} listed trajectories."
+        )
+        return items
+    rng = np.random.Generator(np.random.MT19937(42))
+    return list(rng.choice(items, n, replace=False))
+
+
 def order_by_date(df: pd.DataFrame, idx: list[int]) -> list[int]:  # noqa: F821
     """From the previously sorted DataFrame of directory files, return the
     unique set of drifter IDs sorted by their start date (the date of the first

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, Mock, call, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 
@@ -57,7 +57,7 @@ class gdp_common_tests(unittest.TestCase):
             df = gdp.get_gdp_metadata(tmp_path="/tmp/some-path")
 
         assert parse_mock.call_count == 2
-        assert [call.args[0] for call in parse_mock.call_args_list] == [
+        assert [c.args[0] for c in parse_mock.call_args_list] == [
             "dirfl_1_5000.dat",
             "dirfl_15001_current.dat",
         ]

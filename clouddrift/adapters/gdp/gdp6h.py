@@ -194,7 +194,7 @@ def download(
     drifter_urls = list(url_map.values())
 
     if n_random_id:
-        drifter_urls = _subsample(drifter_urls, n_random_id)
+        drifter_urls = gdp._subsample(drifter_urls, n_random_id)
 
     download_with_progress(
         [(u, os.path.join(tmp_path, os.path.basename(u))) for u in drifter_urls],
@@ -206,16 +206,6 @@ def download(
         int(os.path.basename(u).split("_")[2].split(".")[0]) for u in drifter_urls
     ]
     return gdp.order_by_date(gdp_metadata, downloaded_ids)
-
-
-def _subsample(items: list, n: int) -> list:
-    if n > len(items):
-        warnings.warn(
-            f"Retrieving all listed trajectories because {n} is larger than the {len(items)} listed trajectories."
-        )
-        return items
-    rng = np.random.Generator(np.random.MT19937(42))
-    return list(rng.choice(items, n, replace=False))
 
 
 def _resolve_drifter_path(index: int, **kwargs) -> str:
