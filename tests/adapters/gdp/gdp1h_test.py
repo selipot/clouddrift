@@ -27,6 +27,7 @@ class gdp1h_tests(unittest.TestCase):
         self.response_mock.read = Mock(return_value=data_mock)
         self.gdp_mock = Mock()
         self.gdp_mock.order_by_date = Mock(side_effect=lambda _, y: y)
+        self.gdp_mock._subsample = Mock(side_effect=lambda items, n: items[:n])
 
     def test_downloads_all_files_returned(self):
         """
