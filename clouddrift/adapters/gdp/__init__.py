@@ -253,7 +253,7 @@ def _list_gdp_directory_files() -> list[str]:
 def _subsample(items: list, n: int) -> list:
     if n > len(items):
         warnings.warn(
-            f"Retrieving all listed trajectories because {n} is larger than the {len(items)} listed trajectories."
+            f"Requested sample size ({n}) exceeds the number of available trajectories; returning all {len(items)}."
         )
         return items
     rng = np.random.Generator(np.random.MT19937(42))
