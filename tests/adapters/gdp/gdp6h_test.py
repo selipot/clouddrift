@@ -109,3 +109,49 @@ class gdp6h_tests(unittest.TestCase):
             )
 
             assert rowsize == 0
+
+    def test_warns_when_requested_ids_do_not_match_filelist_length(self):
+        with MultiPatcher(
+            [
+                patch(
+                    "clouddrift.adapters.gdp6h.urllib.request.urlopen",
+                    Mock(return_value=self.response_mock),
+                ),
+                patch("clouddrift.adapters.gdp6h.download_with_progress", Mock()),
+                patch("clouddrift.adapters.gdp6h.os.makedirs", Mock()),
+                patch("clouddrift.adapters.gdp6h.gdp", self.gdp_mock),
+            ]
+        ):
+            with self.assertWarnsRegex(
+                UserWarning,
+                "Requested 2 drifter IDs but only found 1 matching files.",
+            ):
+                ret_drifter_ids = gdp6h.download(
+                    "some-url.com",
+                    "../some/path",
+                    [0, 999],
+                    None,
+                )
+
+            assert ret_drifter_ids == [0]
+
+    def test_raises_when_no_files_found(self):
+        with MultiPatcher(
+            [
+                patch("clouddrift.adapters.gdp6h.os.listdir", Mock(return_value=[])),
+                patch("clouddrift.adapters.gdp6h.download_with_progress", Mock()),
+                patch("clouddrift.adapters.gdp6h.os.makedirs", Mock()),
+                patch("clouddrift.adapters.gdp6h.gdp", self.gdp_mock),
+            ]
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "No drifter files found for the provided selection.",
+            ):
+                gdp6h.download(
+                    "some-url.com",
+                    "../some/path",
+                    drifter_ids=None,
+                    n_random_id=None,
+                    skip_download=True,
+                )

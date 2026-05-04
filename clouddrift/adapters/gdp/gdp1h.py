@@ -88,6 +88,11 @@ def to_raggedarray(
     out : RaggedArray
         A RaggedArray instance of the requested dataset
 
+    Raises
+    ------
+    ValueError
+        If no matching drifter files are found for the requested selection.
+
     Examples
     --------
 
@@ -191,6 +196,11 @@ def download(
     -------
     out : list
         List of retrieved drifters
+
+    Raises
+    ------
+    ValueError
+        If no matching drifter files are found for the requested selection.
     """
     print(f"Downloading GDP hourly data from ({url}) to ({tmp_path})")
 
@@ -211,6 +221,16 @@ def download(
     else:
         filelist = [filename_pattern.format(id=did) for did in drifter_ids]
     filelist = list(np.unique(filelist))
+
+    if drifter_ids is not None and len(filelist) != len(drifter_ids):
+        warnings.warn(
+            f"Requested {len(drifter_ids)} drifter IDs but found {len(filelist)} matching files."
+        )
+
+    if len(filelist) == 0:
+        raise ValueError(
+            "No drifter files found for the provided selection. Check drifter_ids, tmp_path, and skip_download settings."
+        )
 
     if n_random_id:
         filelist = gdp._subsample(filelist, n_random_id)

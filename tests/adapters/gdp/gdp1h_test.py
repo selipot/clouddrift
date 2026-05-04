@@ -99,3 +99,46 @@ class gdp1h_tests(unittest.TestCase):
                 ],
                 skip_download=False,
             )
+
+    def test_warns_when_requested_ids_do_not_match_filelist_length(self):
+        with MultiPatcher(
+            [
+                patch("clouddrift.adapters.gdp1h.download_with_progress", Mock()),
+                patch("clouddrift.adapters.gdp1h.os.makedirs", Mock()),
+                patch("clouddrift.adapters.gdp1h.gdp", self.gdp_mock),
+            ]
+        ):
+            # Duplicate IDs collapse through np.unique, triggering the warning.
+            with self.assertWarnsRegex(
+                UserWarning,
+                "Requested 3 drifter IDs but found 2 matching files.",
+            ):
+                ret_drifter_ids = gdp1h.download(
+                    "some-url.com",
+                    "../some/path",
+                    [0, 0, 1],
+                    None,
+                )
+
+            assert ret_drifter_ids == [0, 1]
+
+    def test_raises_when_no_files_found(self):
+        with MultiPatcher(
+            [
+                patch("clouddrift.adapters.gdp1h.os.listdir", Mock(return_value=[])),
+                patch("clouddrift.adapters.gdp1h.download_with_progress", Mock()),
+                patch("clouddrift.adapters.gdp1h.os.makedirs", Mock()),
+                patch("clouddrift.adapters.gdp1h.gdp", self.gdp_mock),
+            ]
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "No drifter files found for the provided selection.",
+            ):
+                gdp1h.download(
+                    "some-url.com",
+                    "../some/path",
+                    drifter_ids=None,
+                    n_random_id=None,
+                    skip_download=True,
+                )

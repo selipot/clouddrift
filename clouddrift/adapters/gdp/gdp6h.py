@@ -63,6 +63,11 @@ def to_raggedarray(
     out : RaggedArray
         A RaggedArray instance of the requested dataset.
 
+    Raises
+    ------
+    ValueError
+        If no matching drifter files are found for the requested selection.
+
     Examples
     --------
 
@@ -162,19 +167,24 @@ def download(
     -------
     out : list
         List of retrieved drifters
+
+    Raises
+    ------
+    ValueError
+        If no matching drifter files are found for the requested selection.
     """
     os.makedirs(tmp_path, exist_ok=True)
 
     print(f"Downloading GDP 6-hourly data to {tmp_path}...")
 
     nc_pattern = re.compile(r"drifter_6h_([0-9]+)\.nc")
-    url_map: dict[str, str] = {}  # filename → url, first occurrence wins
+    file_map: dict[str, str] = {}  # filename → url, first occurrence wins
 
     if skip_download:
         for f in os.listdir(tmp_path):
             m = nc_pattern.fullmatch(f)
             if m and (drifter_ids is None or int(m.group(1)) in drifter_ids):
-                url_map[f] = os.path.join(tmp_path, f)
+                file_map[f] = os.path.join(tmp_path, f)
     else:
         for subdir in [
             "netcdf_1_5000",
@@ -189,21 +199,30 @@ def download(
                 did = int(did_str)
                 if drifter_ids is None or did in drifter_ids:
                     fname = f"drifter_6h_{did}.nc"
-                    url_map.setdefault(fname, f"{url}/{subdir}/{fname}")
+                    file_map.setdefault(fname, f"{url}/{subdir}/{fname}")
+    filelist = list(file_map.values())
 
-    drifter_urls = list(url_map.values())
+    if drifter_ids is not None and len(filelist) != len(drifter_ids):
+        warnings.warn(
+            f"Requested {len(drifter_ids)} drifter IDs but only found {len(filelist)} matching files."
+        )
+
+    if len(filelist) == 0:
+        raise ValueError(
+            "No drifter files found for the provided selection. Check `drifter_ids, tmp_path, and skip_download settings."
+        )
 
     if n_random_id:
-        drifter_urls = gdp._subsample(drifter_urls, n_random_id)
+        filelist = gdp._subsample(filelist, n_random_id)
 
     download_with_progress(
-        [(u, os.path.join(tmp_path, os.path.basename(u))) for u in drifter_urls],
+        [(u, os.path.join(tmp_path, os.path.basename(u))) for u in filelist],
         skip_download=skip_download,
     )
 
     gdp_metadata = gdp.get_gdp_metadata(tmp_path, skip_download=skip_download)
     downloaded_ids = [
-        int(os.path.basename(u).split("_")[2].split(".")[0]) for u in drifter_urls
+        int(os.path.basename(u).split("_")[2].split(".")[0]) for u in filelist
     ]
     return gdp.order_by_date(gdp_metadata, downloaded_ids)
 
