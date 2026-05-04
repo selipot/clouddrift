@@ -209,7 +209,7 @@ def download(
 
     if len(filelist) == 0:
         raise ValueError(
-            "No drifter files found for the provided selection. Check `drifter_ids, tmp_path, and skip_download settings."
+            "No drifter files found for the provided selection. Check `drifter_ids`, `tmp_path`, and `skip_download` settings."
         )
 
     if n_random_id:
