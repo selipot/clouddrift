@@ -13,11 +13,13 @@ Auto-generated summary of CloudDrift's API. For more details and examples, refer
     adapters
     binning
     datasets
+    eddies
     kinematics
     pairs
     plotting
     ragged
     raggedarray
+    ridges
     signal
     sphere
     wavelet
