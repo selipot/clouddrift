@@ -27,8 +27,9 @@ to the Gulf of Mexico. Nonlinear Processes in Geophysics, 28, 181-212.
 import matplotlib.pyplot as plt
 import numpy as np
 
+from clouddrift.eddies import eddy_properties, ridge_averaged_properties
 from clouddrift.ridges import ridge_analysis
-from clouddrift.signal import ellipse_parameters, modulated_ellipse_signal
+from clouddrift.signal import ellipse_circularity, modulated_ellipse_signal
 from clouddrift.wavelet import morse_logspace_freq, morse_wavelet_transform
 
 # Wavelet parameters used throughout, as in Lilly and Perez-Brunius (2021)
@@ -37,17 +38,6 @@ GAMMA, BETA = 3, 2
 # where P = sqrt(beta * gamma) is the wavelet duration, their Eq. (61)
 MIN_RIDGE_LENGTH = 2 * np.sqrt(BETA * GAMMA) / np.pi
 print(f"minimum ridge length: L > {MIN_RIDGE_LENGTH:.2f} oscillations")
-
-
-def circularity(linearity):
-    """Signed circularity xi from the linearity lambda returned by ellipse_parameters.
-
-    The two satisfy xi**2 + lambda**2 = 1, and share their sign, which is positive for
-    counterclockwise motion. xi is the quantity used in the significance criterion of
-    Lilly and Perez-Brunius (2021); |xi| = 1 is a circle and xi = 0 a straight line.
-    """
-    linearity = np.clip(linearity, -1.0, 1.0)
-    return np.sign(linearity) * np.sqrt(1.0 - linearity**2)
 
 
 # %%
@@ -72,7 +62,7 @@ phi_true = phase_rate * time  # phase of the particle on the ellipse
 # (Eqs. 34-36 of Lilly and Perez-Brunius 2021). Here the precession adds about 0.4 %, small
 # but far larger than the error of the ridge estimate, so comparing the estimate against
 # phi' alone would look like a systematic bias of the method when it is nothing of the kind.
-omega_true = phase_rate + circularity(lambda_true) * np.gradient(theta_true)
+omega_true = phase_rate + ellipse_circularity(lambda_true) * np.gradient(theta_true)
 
 xa, ya = modulated_ellipse_signal(kappa_true, lambda_true, theta_true, phi_true)
 background_x = 0.02 * time  # a slow drift, the "background process"
@@ -82,7 +72,7 @@ y = np.real(ya) + background_y
 
 print(
     f"signal: {n_times} samples, period {period}, true |xi| = "
-    f"{np.abs(circularity(lambda_true[0])):.3f}"
+    f"{np.abs(ellipse_circularity(lambda_true[0])):.3f}"
 )
 
 fig, ax = plt.subplots(1, 2, figsize=(11, 4))
@@ -218,45 +208,63 @@ fig.tight_layout()
 # %%
 # 5. Ellipse properties along the ridge
 #
-# This is what the eddies module will do with the along-ridge transform: convert the
-# pair of analytic signals into the time-varying ellipse of Lilly and Perez-Brunius
-# (2021), their Eqs. (28)-(31), and from there to the eddy properties.
+# clouddrift.eddies.eddy_properties turns the pair of analytic signals into the
+# time-varying ellipse of Lilly and Perez-Brunius (2021) and the eddy properties that
+# follow from it. Note that the semi-axes come from the LINEARITY,
+# a = kappa * sqrt(1 + |lambda|), while the geometric mean radius reduces to
+# R = kappa * sqrt(|xi|) in terms of the CIRCULARITY: mixing the two gives a plausible
+# but wrong radius, which is why the identity is checked below.
 
-kappa, linearity, theta, phi = ellipse_parameters(x_star, y_star)
-xi = circularity(linearity)
+properties = eddy_properties(x_star, y_star, ridge_time)
+kappa = properties["kappa"].values
+xi = properties["circularity"].values
+theta = properties["orientation"].values
+radius = properties["radius"].values
+velocity = properties["velocity"].values
 
-# Semi-axes and the geometric mean radius R, Eq. (71). Note that the semi-axes follow
-# from the LINEARITY, a = kappa * sqrt(1 + |lambda|) and b = kappa * sqrt(1 - |lambda|),
-# not from the circularity: kappa**2 = (a**2 + b**2) / 2 and lambda = (a**2 - b**2) /
-# (a**2 + b**2). The circularity then satisfies xi = a * b / kappa**2, so the geometric
-# mean radius reduces to R = sqrt(a * b) = kappa * sqrt(|xi|), which is the check below.
-semi_major = kappa * np.sqrt(1 + np.abs(linearity))
-semi_minor = np.sign(xi) * kappa * np.sqrt(1 - np.abs(linearity))
-radius = np.sqrt(np.abs(semi_major * semi_minor))
-
+xi_true = ellipse_circularity(lambda_true[0])
 print(f"kappa: recovered {kappa[interior].mean():.2f}, true {kappa_true[index].mean():.2f}")
-print(f"xi:    recovered {xi[interior].mean():.3f}, true {circularity(lambda_true[0]):.3f}")
-radius_true = kappa_true[index] * np.sqrt(np.abs(circularity(lambda_true[index])))
+print(f"xi:    recovered {xi[interior].mean():.3f}, true {xi_true:.3f}")
+radius_true = kappa_true[index] * np.sqrt(np.abs(ellipse_circularity(lambda_true[index])))
 print(f"R:     recovered {radius[interior].mean():.2f}, true {radius_true.mean():.2f}")
 print(
-    f"       consistency, R vs kappa * sqrt(|xi|): "
+    "       consistency, R vs kappa * sqrt(|xi|): "
     f"{np.abs(radius[interior] - kappa[interior] * np.sqrt(np.abs(xi[interior]))).max():.2e}"
 )
-print(f"semi-axes: a = {semi_major[interior].mean():.2f}, b = {semi_minor[interior].mean():.2f}")
+# V is the kinetic energy velocity, the signed root-mean-square radius of the ellipse
+# traced by the VELOCITY signal, Eq. (72). For a circular orbit it would equal R * omega;
+# for this ellipse it is close to that but not equal to it.
+print(
+    f"V:     recovered {velocity[interior].mean():.3f}, "
+    f"R * omega would give {(radius[interior] * omega_true[index]).mean():.3f}"
+)
 print(f"rotation sense: {'counterclockwise' if xi[interior].mean() > 0 else 'clockwise'}")
 
-fig, ax = plt.subplots(3, 1, figsize=(11, 7), sharex=True)
+# The ridge-averaged quantities, Eqs. (74)-(75): xi is weighted by the signal power
+# kappa**2, while R and V are root-mean-squares, so that R**2 is the time-averaged area
+# and V**2 the time-averaged kinetic energy
+averaged = ridge_averaged_properties(properties.isel(obs=interior))
+print(
+    f"ridge averages: kappa {float(averaged['kappa']):.2f}, xi {float(averaged['circularity']):.3f}, "
+    f"R {float(averaged['radius']):.2f}, V {float(averaged['velocity']):.3f}"
+)
+
+fig, ax = plt.subplots(4, 1, figsize=(11, 8), sharex=True)
 ax[0].plot(ridge_time, kappa, label="recovered")
 ax[0].plot(time, kappa_true, ls="--", lw=0.8, label="true")
 ax[0].set(ylabel=r"$\kappa$")
 ax[0].legend(fontsize=8)
 ax[1].plot(ridge_time, xi)
-ax[1].axhline(circularity(lambda_true[0]), color="k", ls="--", lw=0.8)
+ax[1].axhline(xi_true, color="k", ls="--", lw=0.8)
 ax[1].set(ylabel=r"circularity $\xi$", ylim=(-1.05, 1.05))
 ax[2].plot(ridge_time, np.unwrap(theta), label="recovered")
 ax[2].plot(time, theta_true, ls="--", lw=0.8, label="true")
-ax[2].set(xlabel="time (samples)", ylabel=r"orientation $\theta$")
+ax[2].set(ylabel=r"orientation $\theta$")
 ax[2].legend(fontsize=8)
+ax[3].plot(ridge_time, radius, label="R")
+ax[3].plot(ridge_time, velocity, label="V")
+ax[3].set(xlabel="time (samples)", ylabel="R, V")
+ax[3].legend(fontsize=8)
 fig.tight_layout()
 
 # %%
@@ -597,5 +605,149 @@ ax.set(
 ax.invert_yaxis()
 ax.legend(loc="lower left")
 fig.colorbar(mesh, ax=ax, label=r"$\log_{10}\|w\|$ (km)")
+fig.tight_layout()
+plt.show()
+
+# %%
+# 8. Eddy properties of a real feature
+#
+# The property layer applied to the cyclone found in section 7, giving the quantities that
+# a census would report: the geometric mean radius R, the kinetic energy velocity V, the
+# circularity xi, and the nondimensional frequency omega_ast = sign(xi) * omega / f, whose
+# double is the vortex Rossby number, Eq. (67).
+
+eddy_edges = np.concatenate([[0], np.cumsum(cyclonic["rowsize"].values)])
+_, eddy_index, eddy_time, _ = candidates[0]
+eddy_slice = slice(eddy_edges[eddy_index], eddy_edges[eddy_index + 1])
+
+# The transform along the ridge is the analytic displacement signal of the eddy, in km
+displacement_x = cyclonic["transform"].values[0][eddy_slice]
+displacement_y = cyclonic["transform"].values[1][eddy_slice]
+eddy = eddy_properties(displacement_x, displacement_y, eddy_time)
+
+# The centre of the oscillation is the observed position minus the eddy displacement,
+# Eqs. (55)-(58), converted from kilometres to degrees
+observation = eddy_time.astype(int)
+earth_radius_km = EARTH_RADIUS_METERS / 1e3
+latitude_offset = np.real(displacement_y) / earth_radius_km * 180 / np.pi
+longitude_offset = (
+    np.real(displacement_x)
+    / (earth_radius_km * np.cos(np.radians(latitude[observation])))
+    * 180
+    / np.pi
+)
+centre_latitude = latitude[observation] - latitude_offset
+centre_longitude = longitude[observation] - longitude_offset
+
+# Nondimensional frequency at the centre of the oscillation, Eq. (63)
+coriolis_at_centre = np.abs(coriolis_frequency(centre_latitude) * 3600)  # rad/hour
+nondimensional_frequency = (
+    np.sign(eddy["circularity"].values) * eddy["frequency"].values / coriolis_at_centre
+)
+eddy["nondimensional_frequency"] = (["obs"], nondimensional_frequency)
+averaged_eddy = ridge_averaged_properties(eddy)
+
+KM_PER_HOUR_TO_CM_PER_S = 1e5 / 3600
+print(
+    f"\neddy ridge, days {eddy_time[0] / 24:.0f} to {eddy_time[-1] / 24:.0f}, "
+    f"centred near {np.median(centre_latitude):.1f} N, {np.median(centre_longitude):.1f} E"
+)
+# Both the ridge average and the median of the instantaneous values are printed, because
+# they are not the same statistic and can differ a lot. The averages of Eqs. (74)-(75) are
+# weighted by the signal power kappa**2 for xi and omega_ast, and are root-mean-squares for
+# R and V, so a ridge whose frequency drifts is reported at the frequency of its strongest,
+# largest part rather than at its typical one.
+print(f"   {'quantity':<22} {'ridge average':>14} {'median':>9}")
+print(
+    f"   {'period (days)':<22} {2 * np.pi / float(averaged_eddy['frequency']) / 24:14.2f} "
+    f"{2 * np.pi / np.median(eddy['frequency'].values) / 24:9.2f}"
+)
+print(
+    f"   {'radius R (km)':<22} {float(averaged_eddy['radius']):14.1f} "
+    f"{np.median(eddy['radius'].values):9.1f}"
+)
+print(
+    f"   {'velocity V (cm/s)':<22} "
+    f"{float(averaged_eddy['velocity']) * KM_PER_HOUR_TO_CM_PER_S:14.1f} "
+    f"{np.median(eddy['velocity'].values) * KM_PER_HOUR_TO_CM_PER_S:9.1f}"
+)
+print(
+    f"   {'circularity xi':<22} {float(averaged_eddy['circularity']):14.2f} "
+    f"{np.median(eddy['circularity'].values):9.2f}"
+)
+print(
+    f"   {'omega_ast':<22} {float(averaged_eddy['nondimensional_frequency']):14.2f} "
+    f"{np.median(nondimensional_frequency):9.2f}"
+)
+print(
+    f"   {'vortex Rossby number':<22} "
+    f"{2 * float(averaged_eddy['nondimensional_frequency']):14.2f} "
+    f"{2 * np.median(nondimensional_frequency):9.2f}"
+)
+
+# %%
+# The eddy ellipses along the trajectory, one per period, as in Fig. 1b of the paper
+
+period_hours = 2 * np.pi / eddy["frequency"].values
+snapshots = [0]
+while snapshots[-1] + period_hours[snapshots[-1]] < len(eddy_time) - 1:
+    snapshots.append(int(snapshots[-1] + period_hours[snapshots[-1]]))
+
+fig, ax = plt.subplots(figsize=(7, 7))
+ax.plot(
+    longitude[observation], latitude[observation], color="0.7", lw=0.6, label="observed trajectory"
+)
+ax.plot(centre_longitude, centre_latitude, color="k", lw=1, label="estimated eddy centre")
+
+angle = np.linspace(0, 2 * np.pi, 100)
+for index, snapshot in enumerate(snapshots):
+    kappa = eddy["kappa"].values[snapshot]
+    xi = eddy["circularity"].values[snapshot]
+    orientation = eddy["orientation"].values[snapshot]
+    linearity = np.sqrt(max(1 - xi**2, 0.0))
+    semi_major = kappa * np.sqrt(1 + linearity)
+    semi_minor = np.sign(xi) * kappa * np.sqrt(1 - linearity)
+    offset_x = semi_major * np.cos(angle) * np.cos(orientation) - semi_minor * np.sin(
+        angle
+    ) * np.sin(orientation)
+    offset_y = semi_major * np.cos(angle) * np.sin(orientation) + semi_minor * np.sin(
+        angle
+    ) * np.cos(orientation)
+    ax.plot(
+        centre_longitude[snapshot]
+        + offset_x
+        / (earth_radius_km * np.cos(np.radians(centre_latitude[snapshot])))
+        * 180
+        / np.pi,
+        centre_latitude[snapshot] + offset_y / earth_radius_km * 180 / np.pi,
+        color="tab:red",
+        lw=1,
+        label="eddy ellipse, one per period" if index == 0 else None,
+    )
+
+ax.set(
+    xlabel="longitude",
+    ylabel="latitude",
+    title=f"Eddy ellipses, drifter 44000, days {eddy_time[0] / 24:.0f}-{eddy_time[-1] / 24:.0f}",
+)
+ax.set_aspect(1 / np.cos(np.radians(np.median(centre_latitude))))
+ax.legend(fontsize=8)
+fig.tight_layout()
+
+# %%
+# The properties as time series
+
+fig, ax = plt.subplots(4, 1, figsize=(11, 8), sharex=True)
+ax[0].plot(eddy_time / 24, eddy["radius"].values)
+ax[0].set(ylabel="R (km)")
+ax[1].plot(eddy_time / 24, eddy["velocity"].values * KM_PER_HOUR_TO_CM_PER_S)
+ax[1].set(ylabel="V (cm/s)")
+ax[2].plot(eddy_time / 24, eddy["circularity"].values)
+ax[2].axhline(0, color="0.7", lw=0.8)
+ax[2].set(ylabel=r"circularity $\xi$", ylim=(-1.05, 1.05))
+ax[3].plot(eddy_time / 24, nondimensional_frequency)
+ax[3].axhline(0.5, color="0.7", ls="--", lw=0.8)
+ax[3].set(xlabel="time (days)", ylabel=r"$\omega_*$")
+fig.suptitle("Eddy properties along the ridge")
 fig.tight_layout()
 plt.show()
