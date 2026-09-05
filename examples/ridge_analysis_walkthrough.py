@@ -267,16 +267,38 @@ fig.tight_layout()
 # masking on the sign of |w+| - |w-| prevents a ridge from crossing between cyclonic
 # and anticyclonic polarizations, Section 3.7.
 
+import pathlib  # noqa: E402
+
+import xarray as xr  # noqa: E402
+
 from clouddrift.datasets import gdp1h  # noqa: E402
 from clouddrift.ragged import subset  # noqa: E402
 from clouddrift.sphere import EARTH_RADIUS_METERS, coriolis_frequency  # noqa: E402
 from clouddrift.wavelet import morse_spherical_wavelet_transform  # noqa: E402
 
-drifter = subset(gdp1h(), {"id": [44000]}, row_dim_name="traj")
+# A local copy of this one drifter, if it has been saved beside the repository, so the
+# section can run without network access; otherwise the dataset is opened remotely. Run
+# the script from the repository root for the relative path to resolve.
+LOCAL_DRIFTER = pathlib.Path("data/gdp1h_44000.nc")
+if LOCAL_DRIFTER.exists():
+    drifter = xr.open_dataset(LOCAL_DRIFTER)
+    print(f"using the local copy at {LOCAL_DRIFTER}")
+else:
+    drifter = subset(gdp1h(), {"id": [44000]}, row_dim_name="traj")
 latitude = drifter["lat"].values
 longitude = drifter["lon"].values
 # Time in hours since the start of the record
 hours = (drifter["time"].values - drifter["time"].values[0]) / np.timedelta64(1, "h")
+
+# The wavelet transform assumes uniform sampling, so any gap is worth knowing about
+steps = np.diff(hours)
+if not np.allclose(steps, steps[0]):
+    gaps = np.flatnonzero(steps > 1.5 * np.median(steps))
+    print(
+        f"sampling: median {np.median(steps):.2f} h, {len(gaps)} gap(s) longer than that, "
+        f"the largest {steps[gaps].max():.0f} h at day {hours[gaps[np.argmax(steps[gaps])]] / 24:.0f}. "
+        "Gaps are treated here as if the record were continuous."
+    )
 
 frequencies_gdp = morse_logspace_freq(GAMMA, BETA, len(hours), density=4)
 periods_gdp = 2 * np.pi / frequencies_gdp / 24  # in days
@@ -434,13 +456,18 @@ print(
 coriolis_hourly = np.abs(coriolis_frequency(latitude) * 3600)  # rad/hour
 median_coriolis = np.median(coriolis_hourly)
 
-edges = np.concatenate([[0], np.cumsum(cyclonic_narrow["rowsize"].values)])
+# The eddies are taken from the beta = 2 analysis, which resolves their start and end
+# times: at beta = 8 the wavelet spans about five oscillations, which at a 20-day period is
+# a hundred days, so low-frequency ridges are badly smeared in time. The near-inertial
+# ridges come from the beta = 8 analysis, which is what makes them detectable inside an
+# eddy at all. Using each resolution where it is strong is the point of running both.
+edges = np.concatenate([[0], np.cumsum(cyclonic["rowsize"].values)])
 candidates = []
-for k in range(cyclonic_narrow.sizes["ridge"]):
+for k in range(cyclonic.sizes["ridge"]):
     ridge = slice(edges[k], edges[k + 1])
-    ridge_time = cyclonic_narrow["time"].values[ridge]
-    frequency = np.abs(cyclonic_narrow["inst_frequency"].values[ridge])
-    if cyclonic_narrow["ridge_length"].values[k] <= MIN_RIDGE_LENGTH:
+    ridge_time = cyclonic["time"].values[ridge]
+    frequency = np.abs(cyclonic["inst_frequency"].values[ridge])
+    if cyclonic["ridge_length"].values[k] <= MIN_RIDGE_LENGTH:
         continue
     if np.median(frequency) > 0.5 * median_coriolis:  # sub-inertial only
         continue
@@ -456,7 +483,7 @@ for duration, k, ridge_time, frequency in candidates[:5]:
         f"   days {ridge_time[0] / 24:6.0f} to {ridge_time[-1] / 24:6.0f} "
         f"({duration / 24:5.0f} days), "
         f"period {2 * np.pi / np.median(frequency) / 24:6.1f} days, "
-        f"L = {cyclonic_narrow['ridge_length'].values[k]:5.1f}"
+        f"L = {cyclonic['ridge_length'].values[k]:5.1f}"
     )
 
 # Rather than singling out one eddy, every sub-inertial cyclonic ridge gets its own
@@ -472,11 +499,15 @@ for k in range(anticyclonic_narrow.sizes["ridge"]):
     if anticyclonic_narrow["ridge_length"].values[k] > MIN_RIDGE_LENGTH:
         keep[anticyclonic_edges[k] : anticyclonic_edges[k + 1]] = True
 
+# Comparing medians of periods would conflate the shift with the drifter's latitude, which
+# here runs from 19 to 46 degrees, so f itself varies by a factor of two. The comparison is
+# made point by point instead, as the ratio of the measured frequency to each prediction:
+# a ratio of one means the prediction is right.
 predictions = []
-print("\nnear-inertial anticyclonic ridge points during each cyclonic ridge:")
+print("\nnear-inertial anticyclonic ridges during each cyclonic ridge, point by point:")
 print(
-    f"   {'eddy days':>16} {'eddy period':>12} {'points':>7} {'measured':>9} "
-    f"{'f':>7} {'f+omega':>8} {'closer to':>10}"
+    f"   {'eddy days':>16} {'eddy period':>10} {'omega/f':>8} {'points':>7} "
+    f"{'measured/f':>11} {'measured/(f+omega)':>19}  verdict"
 )
 for duration, k, ridge_time, frequency in candidates:
     if duration < 20 * 24:  # ignore ridges lasting less than 20 days
@@ -495,15 +526,22 @@ for duration, k, ridge_time, frequency in candidates:
     )
     if near_inertial.sum() < 24:
         continue
-    measured = np.median(anticyclonic_frequency[near_inertial])
-    plain = np.median(coriolis_at_point[near_inertial])
-    shifted = np.median((coriolis_at_point + shift_at_point)[near_inertial])
-    closer = "f + omega" if abs(measured - shifted) < abs(measured - plain) else "f"
+    measured = anticyclonic_frequency[near_inertial]
+    plain = coriolis_at_point[near_inertial]
+    shifted = plain + shift_at_point[near_inertial]
+    relative_shift = np.median(shift_at_point[near_inertial] / plain)
+    ratio_plain = np.median(measured / plain)
+    ratio_shifted = np.median(measured / shifted)
+    if relative_shift < 0.05:
+        verdict = "shift too small to resolve"
+    elif abs(ratio_shifted - 1) < abs(ratio_plain - 1):
+        verdict = "closer to f + omega"
+    else:
+        verdict = "closer to f"
     print(
         f"   {ridge_time[0] / 24:6.0f} to {ridge_time[-1] / 24:5.0f} "
-        f"{2 * np.pi / np.median(frequency) / 24:10.1f} d {near_inertial.sum():7d} "
-        f"{2 * np.pi / measured / 24:8.3f} d {2 * np.pi / plain / 24:6.3f} d "
-        f"{2 * np.pi / shifted / 24:7.3f} d {closer:>10}"
+        f"{2 * np.pi / np.median(frequency) / 24:8.1f} d {relative_shift:8.2f} "
+        f"{near_inertial.sum():7d} {ratio_plain:11.3f} {ratio_shifted:19.3f}  {verdict}"
     )
 
 # The prediction curves, one per eddy, for the figure below
