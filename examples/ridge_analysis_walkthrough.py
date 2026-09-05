@@ -59,12 +59,20 @@ def circularity(linearity):
 n_times = 2048
 time = np.arange(n_times, dtype=float)  # in samples
 period = 40.0  # samples per oscillation
-omega_true = 2 * np.pi / period
+phase_rate = 2 * np.pi / period  # the rate at which the particle goes round the ellipse
 
 kappa_true = 20.0 * (1 + 0.3 * np.sin(2 * np.pi * time / n_times))  # amplitude
 lambda_true = np.full(n_times, 0.3)  # linearity, so |xi| = sqrt(1 - 0.09) = 0.954
 theta_true = 0.4 * np.pi * time / n_times  # slowly precessing orientation
-phi_true = omega_true * time  # phase of the particle on the ellipse
+phi_true = phase_rate * time  # phase of the particle on the ellipse
+
+# The instantaneous frequency of an elliptical signal is NOT the phase rate alone: a
+# precessing ellipse contributes too, weighted by the circularity,
+#     omega(t) = phi'(t) + xi(t) * theta'(t)
+# (Eqs. 34-36 of Lilly and Perez-Brunius 2021). Here the precession adds about 0.4 %, small
+# but far larger than the error of the ridge estimate, so comparing the estimate against
+# phi' alone would look like a systematic bias of the method when it is nothing of the kind.
+omega_true = phase_rate + circularity(lambda_true) * np.gradient(theta_true)
 
 xa, ya = modulated_ellipse_signal(kappa_true, lambda_true, theta_true, phi_true)
 background_x = 0.02 * time  # a slow drift, the "background process"
@@ -153,7 +161,13 @@ print(
 longest = int(np.argmax(lengths))
 main = slice(start[longest], start[longest + 1])
 ridge_time = ridges["time"].values[main]
-print(f"\nlongest ridge: L = {lengths[longest]:.2f}, expected {n_times / period:.2f} oscillations")
+# L is the integral of the instantaneous frequency, Eq. (60), so the precession enters here
+# too: the expected number of oscillations is not simply the record length over the period
+expected_length = np.trapezoid(omega_true, time) / (2 * np.pi)
+print(
+    f"\nlongest ridge: L = {lengths[longest]:.2f}, expected {expected_length:.2f} oscillations "
+    f"({n_times / period:.2f} from the phase rate alone)"
+)
 
 # %%
 # 4. Recovering the analytic signal along the ridge
@@ -170,15 +184,21 @@ interior = (ridge_time > 200) & (ridge_time < n_times - 200)
 index = ridge_time[interior].astype(int)
 
 amplitude_error = np.abs(np.abs(x_star[interior]) - np.abs(xa[index])) / np.abs(xa[index]).max()
-frequency_error = np.abs(ridges["inst_frequency"].values[main][interior] - omega_true) / omega_true
+estimated_frequency = ridges["inst_frequency"].values[main][interior]
+frequency_error = np.abs(estimated_frequency - omega_true[index]) / omega_true[index]
+phase_rate_error = np.abs(estimated_frequency - phase_rate) / phase_rate
 
 print(
     f"amplitude of x*, relative error: median {np.median(amplitude_error):.2%}, "
     f"max {amplitude_error.max():.2%}"
 )
 print(
-    f"instantaneous frequency, relative error: median {np.median(frequency_error):.2%}, "
-    f"max {frequency_error.max():.2%}"
+    f"instantaneous frequency, relative error: median {np.median(frequency_error):.3%}, "
+    f"max {frequency_error.max():.3%}"
+)
+print(
+    f"   the same estimate against the phase rate alone: {np.median(phase_rate_error):.3%} - "
+    "not a bias of the method, but the precession term it correctly includes"
 )
 
 fig, ax = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
@@ -189,7 +209,8 @@ ax[0].set(ylabel="x")
 ax[0].legend(ncol=3, fontsize=8)
 ax[1].plot(ridge_time, ridges["inst_frequency"].values[main], label="instantaneous frequency")
 ax[1].plot(ridge_time, ridges["frequency"].values[main], lw=0.8, label="scale frequency")
-ax[1].axhline(omega_true, color="k", ls="--", lw=0.8, label="true frequency")
+ax[1].plot(time, omega_true, "k--", lw=0.8, label=r"true $\omega = \phi' + \xi\theta'$")
+ax[1].axhline(phase_rate, color="0.6", ls=":", lw=0.8, label=r"phase rate $\phi'$ alone")
 ax[1].set(xlabel="time (samples)", ylabel="rad/sample")
 ax[1].legend(ncol=3, fontsize=8)
 fig.tight_layout()
