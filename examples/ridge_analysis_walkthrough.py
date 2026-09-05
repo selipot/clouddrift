@@ -459,9 +459,57 @@ for duration, k, ridge_time, frequency in candidates[:5]:
         f"L = {cyclonic_narrow['ridge_length'].values[k]:5.1f}"
     )
 
-_, eddy, eddy_time, eddy_frequency = candidates[0]
-eddy_on_full_axis = np.interp(hours, eddy_time, eddy_frequency, left=0.0, right=0.0)
-shifted_inertial_period = 2 * np.pi / (coriolis_hourly + eddy_on_full_axis) / 24
+# Rather than singling out one eddy, every sub-inertial cyclonic ridge gets its own
+# prediction, and the anticyclonic ridge points that coexist with it in time are compared
+# against both the local inertial frequency and the shifted one. This turns the figure
+# into a measurement: if the shift is real, the measured frequency should sit closer to
+# f + omega_eddy than to f.
+anticyclonic_edges = np.concatenate([[0], np.cumsum(anticyclonic_narrow["rowsize"].values)])
+anticyclonic_time = anticyclonic_narrow["time"].values
+anticyclonic_frequency = np.abs(anticyclonic_narrow["inst_frequency"].values)
+keep = np.zeros(anticyclonic_time.size, dtype=bool)
+for k in range(anticyclonic_narrow.sizes["ridge"]):
+    if anticyclonic_narrow["ridge_length"].values[k] > MIN_RIDGE_LENGTH:
+        keep[anticyclonic_edges[k] : anticyclonic_edges[k + 1]] = True
+
+predictions = []
+print("\nnear-inertial anticyclonic ridge points during each cyclonic ridge:")
+print(
+    f"   {'eddy days':>16} {'eddy period':>12} {'points':>7} {'measured':>9} "
+    f"{'f':>7} {'f+omega':>8} {'closer to':>10}"
+)
+for duration, k, ridge_time, frequency in candidates:
+    if duration < 20 * 24:  # ignore ridges lasting less than 20 days
+        continue
+    eddy_on_full_axis = np.interp(hours, ridge_time, frequency, left=0.0, right=0.0)
+    predictions.append(eddy_on_full_axis)
+
+    # anticyclonic ridge points inside this eddy and within a broad inertial band
+    coriolis_at_point = np.interp(anticyclonic_time, hours, coriolis_hourly)
+    shift_at_point = np.interp(anticyclonic_time, hours, eddy_on_full_axis)
+    near_inertial = (
+        keep
+        & (shift_at_point > 0)
+        & (anticyclonic_frequency > 0.6 * coriolis_at_point)
+        & (anticyclonic_frequency < 2.0 * coriolis_at_point)
+    )
+    if near_inertial.sum() < 24:
+        continue
+    measured = np.median(anticyclonic_frequency[near_inertial])
+    plain = np.median(coriolis_at_point[near_inertial])
+    shifted = np.median((coriolis_at_point + shift_at_point)[near_inertial])
+    closer = "f + omega" if abs(measured - shifted) < abs(measured - plain) else "f"
+    print(
+        f"   {ridge_time[0] / 24:6.0f} to {ridge_time[-1] / 24:5.0f} "
+        f"{2 * np.pi / np.median(frequency) / 24:10.1f} d {near_inertial.sum():7d} "
+        f"{2 * np.pi / measured / 24:8.3f} d {2 * np.pi / plain / 24:6.3f} d "
+        f"{2 * np.pi / shifted / 24:7.3f} d {closer:>10}"
+    )
+
+# The prediction curves, one per eddy, for the figure below
+shifted_inertial_periods = [
+    (2 * np.pi / (coriolis_hourly + prediction) / 24, prediction > 0) for prediction in predictions
+]
 
 # %%
 norm_narrow = np.sqrt(np.abs(wx_narrow) ** 2 + np.abs(wy_narrow) ** 2)
@@ -472,14 +520,14 @@ mesh = ax.pcolormesh(
     hours / 24, periods_narrow, np.log10(norm_narrow), shading="auto", cmap="Greys"
 )
 ax.plot(hours / 24, coriolis_period, "k--", lw=1, label="inertial period")
-inside = eddy_on_full_axis > 0
-ax.plot(
-    hours[inside] / 24,
-    shifted_inertial_period[inside],
-    color="magenta",
-    lw=1.5,
-    label=r"$2\pi/(f + \omega_{eddy})$",
-)
+for index, (period_curve, inside) in enumerate(shifted_inertial_periods):
+    ax.plot(
+        hours[inside] / 24,
+        period_curve[inside],
+        color="magenta",
+        lw=1.5,
+        label=r"$2\pi/(f + \omega_{eddy})$" if index == 0 else None,
+    )
 
 for result, color, name in [
     (cyclonic_narrow, "tab:red", "cyclonic"),
