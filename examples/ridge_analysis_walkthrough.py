@@ -558,14 +558,6 @@ mesh = ax.pcolormesh(
     hours / 24, periods_narrow, np.log10(norm_narrow), shading="auto", cmap="Greys"
 )
 ax.plot(hours / 24, coriolis_period, "k--", lw=1, label="inertial period")
-for index, (period_curve, inside) in enumerate(shifted_inertial_periods):
-    ax.plot(
-        hours[inside] / 24,
-        period_curve[inside],
-        color="magenta",
-        lw=1.5,
-        label=r"$2\pi/(f + \omega_{eddy})$" if index == 0 else None,
-    )
 
 for result, color, name in [
     (cyclonic_narrow, "tab:red", "cyclonic"),
@@ -586,6 +578,15 @@ for result, color, name in [
             label=None if labelled else name,
         )
         labelled = True
+
+for index, (period_curve, inside) in enumerate(shifted_inertial_periods):
+    ax.plot(
+        hours[inside] / 24,
+        period_curve[inside],
+        color="magenta",
+        lw=1.5,
+        label=r"$2\pi/(f + \omega_{eddy})$" if index == 0 else None,
+    )
 
 ax.set(
     yscale="log",
