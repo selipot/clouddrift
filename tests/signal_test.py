@@ -6,6 +6,7 @@ import xarray as xr
 from clouddrift.signal import (
     analytic_signal,
     cartesian_to_rotary,
+    ellipse_circularity,
     ellipse_parameters,
     modulated_ellipse_signal,
     rotary_to_cartesian,
@@ -162,6 +163,63 @@ class ellipse_parameters_tests(unittest.TestCase):
         self.assertTrue(
             np.allclose(np.mod(np.angle(self.ya), np.pi), np.mod(np.angle(ya), np.pi), atol=1e-2)
         )
+
+
+class ellipse_circularity_tests(unittest.TestCase):
+    def test_identity_with_linearity(self):
+        """Circularity and linearity satisfy xi**2 + lambda**2 = 1."""
+        linearity = np.linspace(-1, 1, 101)
+        circularity = ellipse_circularity(linearity)
+        np.testing.assert_allclose(circularity**2 + linearity**2, 1.0)
+
+    def test_limits(self):
+        """A circle has |xi| = 1, a straight line has xi = 0."""
+        self.assertEqual(ellipse_circularity(0.0), 1.0)  # circle, counterclockwise
+        self.assertEqual(ellipse_circularity(1.0), 0.0)  # a straight line
+        self.assertEqual(ellipse_circularity(-1.0), 0.0)
+
+    def test_sign_follows_the_direction_of_rotation(self):
+        """The sign marks the direction of rotation, as it does for the linearity."""
+        self.assertGreater(ellipse_circularity(0.3), 0)
+        self.assertLess(ellipse_circularity(-0.3), 0)
+        np.testing.assert_allclose(ellipse_circularity(0.3), -ellipse_circularity(-0.3))
+
+    def test_matches_the_semi_axes(self):
+        """xi = 2ab / (a**2 + b**2) for the semi-axes implied by kappa and lambda."""
+        kappa, linearity = 20.0, 0.3
+        semi_major = kappa * np.sqrt(1 + np.abs(linearity))
+        semi_minor = kappa * np.sqrt(1 - np.abs(linearity))
+        expected = 2 * semi_major * semi_minor / (semi_major**2 + semi_minor**2)
+        np.testing.assert_allclose(ellipse_circularity(linearity), expected)
+
+    def test_recovers_a_known_ellipse(self):
+        """Round trip through modulated_ellipse_signal and ellipse_parameters."""
+        time = np.arange(1024, dtype=float)
+        kappa = np.full(1024, 20.0)
+        linearity = np.full(1024, -0.5)  # clockwise
+        theta = np.zeros(1024)
+        phi = 2 * np.pi * time / 40.0
+        xa, ya = modulated_ellipse_signal(kappa, linearity, theta, phi)
+        _, recovered_linearity, _, _ = ellipse_parameters(xa, ya)
+
+        circularity = ellipse_circularity(recovered_linearity)
+        np.testing.assert_allclose(circularity, ellipse_circularity(linearity), atol=1e-10)
+        # The geometric mean radius reduces to kappa * sqrt(|xi|)
+        semi_major = kappa * np.sqrt(1 + np.abs(linearity))
+        semi_minor = kappa * np.sqrt(1 - np.abs(linearity))
+        np.testing.assert_allclose(
+            np.sqrt(semi_major * semi_minor), kappa * np.sqrt(np.abs(circularity))
+        )
+
+    def test_accepts_array_like(self):
+        circularity = ellipse_circularity([0.0, 0.6, -0.6])
+        np.testing.assert_allclose(circularity, [1.0, 0.8, -0.8])
+        self.assertIsInstance(circularity, np.ndarray)
+
+    def test_clips_out_of_range_input(self):
+        """Values marginally outside [-1, 1], from floating point error, do not produce NaN."""
+        self.assertFalse(np.isnan(ellipse_circularity(1.0 + 1e-15)))
+        self.assertFalse(np.isnan(ellipse_circularity(-1.0 - 1e-15)))
 
 
 class modulated_ellipse_signal_tests(unittest.TestCase):

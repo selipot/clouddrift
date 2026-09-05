@@ -314,6 +314,76 @@ def ellipse_parameters(
     return kappa, lambda_, theta, phi
 
 
+def ellipse_circularity(
+    linearity: np.ndarray | xr.DataArray,
+) -> np.ndarray:
+    """Return the signed ellipse circularity from the ellipse linearity.
+
+        The circularity ``xi`` and the linearity ``lambda`` returned by
+        :func:`ellipse_parameters` are two views of the same ellipse geometry,
+
+        .. math::
+            \\lambda = \\frac{a^2 - b^2}{a^2 + b^2}, \\qquad
+            \\xi = \\frac{2ab}{a^2 + b^2}, \\qquad \\lambda^2 + \\xi^2 = 1
+
+        for semi-axes ``a`` and ``b``, with ``b`` signed. Both are positive for counterclockwise
+        motion and negative for clockwise motion. A circle has ``|xi| = 1`` and ``lambda = 0``;
+        a straight line has ``xi = 0`` and ``|lambda| = 1``.
+
+        The circularity is the quantity used to characterize eddies in Lilly and Perez-Brunius
+        (2021), where it appears in the significance parameter and in the geometric mean radius,
+        which reduces to ``R = kappa * sqrt(|xi|)``.
+
+        Parameters
+        ----------
+        linearity : array_like
+            Ellipse linearity between -1 and 1, as returned by :func:`ellipse_parameters`.
+
+        Returns
+        -------
+        circularity : np.ndarray
+            Signed ellipse circularity between -1 and 1.
+
+        Examples
+        --------
+
+    A linearity of 0.3 describes a nearly circular ellipse, and the sign carries the
+        direction of rotation, counterclockwise here and clockwise for a linearity of -0.3:
+
+        >>> xi = ellipse_circularity(0.3)     # 0.954
+        >>> xi = ellipse_circularity(-0.3)    # -0.954
+
+        From a pair of analytic signals:
+
+        >>> kappa, linearity, theta, phi = ellipse_parameters(analytic_signal(x), analytic_signal(y))
+        >>> xi = ellipse_circularity(linearity)
+
+        Notes
+        -----
+        A linearity of exactly zero, a perfect circle, carries no sign information, and is taken
+        here to be counterclockwise. :func:`ellipse_parameters` avoids the ambiguity by returning
+        a small signed value in that case rather than zero.
+
+        References
+        ----------
+        [1] Lilly JM, Perez-Brunius P. 2021 Extracting statistically significant eddy signals from
+        large Lagrangian datasets using wavelet ridge analysis, with application to the Gulf of
+        Mexico. Nonlin. Processes Geophys. 28, 181-212. (10.5194/npg-28-181-2021). See their Eq. (5)
+        and Table A1.
+
+        [2] Lilly JM, Olhede SC. 2010 Bivariate instantaneous frequency and bandwidth.
+        IEEE T. Signal Proces. 58, 591-603. (10.1109/TSP.2009.2031729).
+
+        See Also
+        --------
+        :func:`ellipse_parameters`, :func:`modulated_ellipse_signal`
+
+    """
+    linearity = np.clip(np.asarray(linearity, dtype=float), -1.0, 1.0)
+    sign = np.where(linearity >= 0, 1.0, -1.0)
+    return sign * np.sqrt(1.0 - linearity**2)
+
+
 def modulated_ellipse_signal(
     kappa: np.ndarray | xr.DataArray,
     lambda_: np.ndarray | xr.DataArray,
