@@ -364,3 +364,130 @@ ax.legend()
 fig.colorbar(mesh, ax=ax, label=r"$\log_{10}\|w\|$ (km)")
 fig.tight_layout()
 plt.show()
+
+
+# %%
+# 7. Inertial oscillations shifted by a cyclone
+#
+# Inertial oscillations inside an eddy are shifted from f to f + zeta/2 (Kunze, 1985),
+# and for a core in solid-body rotation zeta/2 is the angular velocity of the eddy, so the
+# shifted frequency is f + omega_eddy: the frequency of the cyclonic ridge adds to the
+# frequency of the anticyclonic inertial ridge during the eddy.
+#
+# Detecting both at once is demanding. A ridge point is a local maximum of ||w(t,s)|| with
+# respect to scale, and with beta = 2 the wavelet is short in time and correspondingly
+# broad in frequency, so an energetic eddy spreads enough power into the inertial band to
+# flatten the weaker inertial maximum. On synthetic tests with a 0.5 km inertial signal
+# under an 80 km eddy, detection inside the eddy falls to 7 % of the time while remaining
+# at 70 % outside it. Two changes each restore it, and this section runs both:
+#
+#   - a larger beta narrows the wavelet in frequency, separating the eddy from the
+#     inertial band (97 % inside the eddy at beta = 5, 99 % at beta = 8). Section 3.6 of
+#     the paper notes the tradeoff: small beta suits strongly modulated signals, large beta
+#     resolves closely spaced oscillations, which is what is needed here;
+#   - detecting ridges on the negative rotary transform alone rather than on the joint
+#     bivariate norm keeps the eddy, which is almost purely positively rotating, out of the
+#     competition entirely (94 % inside the eddy even at beta = 2).
+#
+# Raising amplitude_threshold does not help: it is a floor on |w|, and the obstruction is
+# the shape of ||w|| in scale, not its level.
+
+BETA_NARROW = 8
+frequencies_narrow = morse_logspace_freq(GAMMA, BETA_NARROW, len(hours), density=4)
+wx_narrow, wy_narrow = morse_spherical_wavelet_transform(
+    latitude,
+    longitude,
+    GAMMA,
+    BETA_NARROW,
+    frequencies_narrow,
+    boundary="mirror",
+    radius=EARTH_RADIUS_METERS / 1e3,
+)
+difference_narrow = np.abs(wx_narrow + 1j * wy_narrow) - np.abs(wx_narrow - 1j * wy_narrow)
+
+cyclonic_narrow = ridge_analysis(
+    (wx_narrow, wy_narrow),
+    frequencies_narrow,
+    hours,
+    mask=difference_narrow >= 0,
+    min_ridge_size=24,
+)
+anticyclonic_narrow = ridge_analysis(
+    (wx_narrow, wy_narrow),
+    frequencies_narrow,
+    hours,
+    mask=difference_narrow < 0,
+    min_ridge_size=24,
+)
+print(
+    f"beta = {BETA_NARROW}: {cyclonic_narrow.sizes['ridge']} cyclonic and "
+    f"{anticyclonic_narrow.sizes['ridge']} anticyclonic ridges "
+    f"(beta = {BETA} gave {cyclonic.sizes['ridge']} and {anticyclonic.sizes['ridge']})"
+)
+
+# The longest cyclonic ridge is taken as the eddy, and its frequency is mapped onto the
+# full time axis so that it can be added to the Coriolis frequency
+edges = np.concatenate([[0], np.cumsum(cyclonic_narrow["rowsize"].values)])
+eddy = int(np.argmax(cyclonic_narrow["ridge_length"].values))
+eddy_slice = slice(edges[eddy], edges[eddy + 1])
+eddy_time = cyclonic_narrow["time"].values[eddy_slice]
+eddy_frequency = np.abs(cyclonic_narrow["inst_frequency"].values[eddy_slice])
+print(
+    f"eddy ridge: days {eddy_time[0] / 24:.0f} to {eddy_time[-1] / 24:.0f}, "
+    f"period {2 * np.pi / np.median(eddy_frequency) / 24:.1f} days, "
+    f"L = {cyclonic_narrow['ridge_length'].values[eddy]:.1f}"
+)
+
+coriolis_hourly = np.abs(coriolis_frequency(latitude) * 3600)  # rad/hour
+eddy_on_full_axis = np.interp(hours, eddy_time, eddy_frequency, left=0.0, right=0.0)
+shifted_inertial_period = 2 * np.pi / (coriolis_hourly + eddy_on_full_axis) / 24
+
+# %%
+norm_narrow = np.sqrt(np.abs(wx_narrow) ** 2 + np.abs(wy_narrow) ** 2)
+periods_narrow = 2 * np.pi / frequencies_narrow / 24
+
+fig, ax = plt.subplots(figsize=(12, 5))
+mesh = ax.pcolormesh(
+    hours / 24, periods_narrow, np.log10(norm_narrow), shading="auto", cmap="Greys"
+)
+ax.plot(hours / 24, coriolis_period, "k--", lw=1, label="inertial period")
+inside = eddy_on_full_axis > 0
+ax.plot(
+    hours[inside] / 24,
+    shifted_inertial_period[inside],
+    color="magenta",
+    lw=1.5,
+    label=r"$2\pi/(f + \omega_{eddy})$",
+)
+
+for result, color, name in [
+    (cyclonic_narrow, "tab:red", "cyclonic"),
+    (anticyclonic_narrow, "tab:blue", "anticyclonic"),
+]:
+    sizes = result["rowsize"].values
+    bounds = np.concatenate([[0], np.cumsum(sizes)])
+    labelled = False
+    for k in range(result.sizes["ridge"]):
+        if result["ridge_length"].values[k] <= MIN_RIDGE_LENGTH:
+            continue
+        ridge = slice(bounds[k], bounds[k + 1])
+        ax.plot(
+            result["time"].values[ridge] / 24,
+            2 * np.pi / result["frequency"].values[ridge] / 24,
+            color=color,
+            lw=1.5,
+            label=None if labelled else name,
+        )
+        labelled = True
+
+ax.set(
+    yscale="log",
+    xlabel="time (days)",
+    ylabel="period (days)",
+    title=f"One-sided ridges with beta = {BETA_NARROW}, GDP drifter 44000",
+)
+ax.invert_yaxis()
+ax.legend(loc="lower left")
+fig.colorbar(mesh, ax=ax, label=r"$\log_{10}\|w\|$ (km)")
+fig.tight_layout()
+plt.show()
