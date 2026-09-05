@@ -131,11 +131,22 @@ lengths = ridges["ridge_length"].values
 
 print(f"{ridges.sizes['ridge']} ridges, {ridges.sizes['obs']} ridge points")
 print(f"{'ridge':>6} {'points':>7} {'L':>8} {'mean period':>12}")
-for k, ridge_id in enumerate(ridges["ridge"].values):
+for k, ridge_id in enumerate(ridges["id"].values):
     ridge = slice(start[k], start[k + 1])
     mean_period = 2 * np.pi / ridges["inst_frequency"].values[ridge].mean()
     flag = "  <- kept" if lengths[k] > MIN_RIDGE_LENGTH else ""
     print(f"{int(ridge_id):>6} {rowsize[k]:>7} {lengths[k]:>8.2f} {mean_period:>12.2f}{flag}")
+
+# The result follows the CloudDrift ragged convention: an observation dimension "obs", a
+# row dimension "ridge", and an "id" variable naming each row, so a single ridge comes out
+# with subset and its defaults
+from clouddrift.ragged import subset  # noqa: E402
+
+first = subset(ridges, {"id": int(ridges["id"].values[0])}, row_dim_name="ridge")
+print(
+    f"\nsubset of ridge {int(ridges['id'].values[0])}: "
+    f"{first.sizes['obs']} points, L = {float(first['ridge_length'].values[0]):.2f}"
+)
 
 # The longest ridge is the oscillation; the rest are short, spurious features that the
 # ridge length criterion removes
