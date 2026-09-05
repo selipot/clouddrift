@@ -425,20 +425,41 @@ print(
     f"(beta = {BETA} gave {cyclonic.sizes['ridge']} and {anticyclonic.sizes['ridge']})"
 )
 
-# The longest cyclonic ridge is taken as the eddy, and its frequency is mapped onto the
-# full time axis so that it can be added to the Coriolis frequency
-edges = np.concatenate([[0], np.cumsum(cyclonic_narrow["rowsize"].values)])
-eddy = int(np.argmax(cyclonic_narrow["ridge_length"].values))
-eddy_slice = slice(edges[eddy], edges[eddy + 1])
-eddy_time = cyclonic_narrow["time"].values[eddy_slice]
-eddy_frequency = np.abs(cyclonic_narrow["inst_frequency"].values[eddy_slice])
-print(
-    f"eddy ridge: days {eddy_time[0] / 24:.0f} to {eddy_time[-1] / 24:.0f}, "
-    f"period {2 * np.pi / np.median(eddy_frequency) / 24:.1f} days, "
-    f"L = {cyclonic_narrow['ridge_length'].values[eddy]:.1f}"
-)
-
+# Choosing the eddy ridge needs care. The ridge length L counts oscillations, so the
+# longest ridge by L is typically a high-frequency one: ranking by L alone selects a
+# near-inertial cyclonic ridge, and the resulting f + omega then lands near half the
+# inertial period, nowhere near an eddy. An eddy is a SUB-INERTIAL feature, turning more
+# slowly than the inertial oscillation, so candidates are restricted by frequency first
+# and then ranked by how long they last.
 coriolis_hourly = np.abs(coriolis_frequency(latitude) * 3600)  # rad/hour
+median_coriolis = np.median(coriolis_hourly)
+
+edges = np.concatenate([[0], np.cumsum(cyclonic_narrow["rowsize"].values)])
+candidates = []
+for k in range(cyclonic_narrow.sizes["ridge"]):
+    ridge = slice(edges[k], edges[k + 1])
+    ridge_time = cyclonic_narrow["time"].values[ridge]
+    frequency = np.abs(cyclonic_narrow["inst_frequency"].values[ridge])
+    if cyclonic_narrow["ridge_length"].values[k] <= MIN_RIDGE_LENGTH:
+        continue
+    if np.median(frequency) > 0.5 * median_coriolis:  # sub-inertial only
+        continue
+    candidates.append((ridge_time[-1] - ridge_time[0], k, ridge_time, frequency))
+
+candidates.sort(reverse=True, key=lambda candidate: candidate[0])
+print(
+    f"{len(candidates)} sub-inertial cyclonic ridges longer than {MIN_RIDGE_LENGTH:.2f} "
+    "oscillations; the five longest-lived:"
+)
+for duration, k, ridge_time, frequency in candidates[:5]:
+    print(
+        f"   days {ridge_time[0] / 24:6.0f} to {ridge_time[-1] / 24:6.0f} "
+        f"({duration / 24:5.0f} days), "
+        f"period {2 * np.pi / np.median(frequency) / 24:6.1f} days, "
+        f"L = {cyclonic_narrow['ridge_length'].values[k]:5.1f}"
+    )
+
+_, eddy, eddy_time, eddy_frequency = candidates[0]
 eddy_on_full_axis = np.interp(hours, eddy_time, eddy_frequency, left=0.0, right=0.0)
 shifted_inertial_period = 2 * np.pi / (coriolis_hourly + eddy_on_full_axis) / 24
 
